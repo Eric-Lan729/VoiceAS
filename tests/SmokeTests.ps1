@@ -1,0 +1,107 @@
+param([string]$Executable = "$PSScriptRoot\..\x64\Debug\VoiceAS.exe")
+
+$ErrorActionPreference = 'Stop'
+$Executable = (Resolve-Path -LiteralPath $Executable).Path
+$testDirectory = Join-Path $PSScriptRoot "smoke-output-$PID"
+$configPath = Join-Path $testDirectory 'priority.txt'
+$monitor = $null
+$duplicate = $null
+$checks = 0
+
+function Assert-True([bool]$Condition, [string]$Description) {
+    if (-not $Condition) { throw $Description }
+    $script:checks++
+}
+
+function Start-App([string[]]$AppArguments, [string]$InputText = '') {
+    $info = [System.Diagnostics.ProcessStartInfo]::new($Executable)
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $info.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
+    foreach ($argument in $AppArguments) { $info.ArgumentList.Add($argument) }
+    $process = [System.Diagnostics.Process]::Start($info)
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.StandardInput.Write($InputText)
+    $process.StandardInput.Close()
+    return @{ Process = $process; Stdout = $stdout; Stderr = $stderr }
+}
+
+function Complete-App($Invocation) {
+    if (-not $Invocation.Process.WaitForExit(10000)) { throw 'Application did not exit in time.' }
+    return @{ Code = $Invocation.Process.ExitCode; Out = $Invocation.Stdout.GetAwaiter().GetResult(); Err = $Invocation.Stderr.GetAwaiter().GetResult() }
+}
+
+try {
+    New-Item -ItemType Directory -Path $testDirectory | Out-Null
+    $list = Complete-App (Start-App @('--list'))
+    Assert-True ($list.Code -eq 0) 'Device enumeration failed.'
+    $active = @([regex]::Matches($list.Out, '(?m)^\[\d+\] (?<name>[^\r\n]+)\r?\n\s+ID: (?<id>[^\r\n]+)\r?\n\s+State: Active\r?$(?:\n\s+Wireless: (?<wireless>\w+)\r?$)?'))
+    Assert-True ($active.Count -gt 0) 'Smoke test needs an active output device.'
+    $order = @(1..$active.Count)
+    [array]::Reverse($order)
+    $inputText = "0`n$($order -join ',')`nn`n"
+    $configured = Complete-App (Start-App @('--configure', '--config', $configPath) $inputText)
+    Assert-True ($configured.Code -eq 0) "Configuration failed: $($configured.Err)"
+    Assert-True (-not $configured.Out.Contains('State: Not present')) 'Configuration must not show inactive devices.'
+    foreach ($match in [regex]::Matches($list.Out, '(?m)^\[\d+\] [^\r\n]+\r?\n\s+ID: (?<id>[^\r\n]+)\r?\n\s+State: (?!Active)[^\r\n]+')) {
+        Assert-True (-not $configured.Out.Contains($match.Groups['id'].Value)) 'An inactive endpoint was shown in configuration.'
+    }
+    $saved = [System.IO.File]::ReadAllText($configPath)
+    $expectedIds = @($order | ForEach-Object { 'device=' + $active[$_ - 1].Groups['id'].Value })
+    $actualIds = @($saved -split "`n" | Where-Object { $_.StartsWith('device=') })
+    Assert-True (($actualIds -join '|') -eq ($expectedIds -join '|')) 'Saved IDs did not follow requested order.'
+    Assert-True ($saved.Contains('communications=0')) 'Default configuration must preserve independent communication routing.'
+    $cancelled = Complete-App (Start-App @('--configure', '--config', $configPath) "`n")
+    Assert-True ($cancelled.Code -eq 0 -and [System.IO.File]::ReadAllText($configPath) -eq $saved) 'Cancel must preserve saved order.'
+
+    $preview = Complete-App (Start-App @('--monitor', '--dry-run', '--once', '--config', $configPath))
+    $eligibleOrder = @($order | Where-Object { $active[$_ - 1].Groups['wireless'].Value -notin @('Offline', 'Unknown') })
+    if ($eligibleOrder.Count) {
+        Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains($active[$eligibleOrder[0] - 1].Groups['name'].Value)) 'Monitor must select the first configured usable endpoint.'
+    }
+    else { Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains('保留当前默认设备')) 'Unavailable wireless headsets must not be selected.' }
+    $missing = Complete-App (Start-App @('--monitor', '--config', (Join-Path $testDirectory 'missing.txt')))
+    Assert-True ($missing.Code -eq 1 -and $missing.Err.Contains('--configure')) 'Missing configuration must explain how to configure.'
+    $invalid = Complete-App (Start-App @('--once'))
+    Assert-True ($invalid.Code -eq 1) 'Invalid command combinations must fail.'
+    $menu = Complete-App (Start-App @('--config', $configPath) "0`n")
+    Assert-True ($menu.Code -eq 0 -and $menu.Out.Contains('1.') -and $menu.Out.Contains('2.')) 'Both menu entries must be available.'
+
+    $monitor = Start-App @('--monitor', '--dry-run', '--config', $configPath)
+    Start-Sleep -Milliseconds 500
+    Assert-True (-not $monitor.Process.HasExited) 'Listener must keep running.'
+    $duplicate = Start-App @('--monitor', '--dry-run', '--once', '--config', $configPath)
+    $duplicateResult = Complete-App $duplicate
+    Assert-True ($duplicateResult.Code -eq 1 -and $duplicateResult.Err.Contains('already running')) 'Duplicate monitor must be rejected.'
+
+    # Reconfigure while the listener runs: its next check must reload the new order.
+    $updated = Complete-App (Start-App @('--configure', '--config', $configPath) "1`ny`n")
+    Assert-True ($updated.Code -eq 0) 'Reconfiguration while listening failed.'
+    Start-Sleep -Milliseconds 2500
+    $validContent = [System.IO.File]::ReadAllText($configPath)
+    [System.IO.File]::WriteAllText($configPath, 'broken configuration')
+    Start-Sleep -Milliseconds 2500
+    [System.IO.File]::WriteAllText($configPath, $validContent)
+    Start-Sleep -Milliseconds 2500
+    Assert-True (-not $monitor.Process.HasExited) 'Listener must survive a malformed configuration and recover.'
+    $monitor.Process.Kill()
+    $stopped = Complete-App $monitor
+    Assert-True ($stopped.Out.Contains('已加载新的优先顺序')) 'Listener did not reload the configuration.'
+    Assert-True ($stopped.Err.Contains('继续使用上次有效配置')) 'Malformed configuration must retain the last valid order.'
+    Assert-True ($stopped.Out.Contains('配置文件读取已恢复')) 'Listener did not recover after configuration was repaired.'
+    Write-Output "PASS: $checks CLI and listener checks."
+}
+finally {
+    foreach ($invocation in @($monitor, $duplicate)) {
+        if ($invocation -and -not $invocation.Process.HasExited) { $invocation.Process.Kill(); $invocation.Process.WaitForExit() }
+    }
+    # Remove only the known test file and its now-empty directory; never recurse.
+    if (Test-Path -LiteralPath $configPath) { Remove-Item -LiteralPath $configPath }
+    if (Test-Path -LiteralPath $testDirectory) { Remove-Item -LiteralPath $testDirectory }
+}

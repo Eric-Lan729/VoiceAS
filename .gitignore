@@ -1,0 +1,33 @@
+# Visual Studio local settings and caches
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+
+# Build outputs and intermediate files
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+*.exe
+*.dll
+*.obj
+*.pdb
+*.ilk
+*.ipdb
+*.iobj
+*.pch
+*.tlog/
+*.lastbuildstate
+*.log
+
+# Temporary configuration and test artifacts
+tests/test-output-*/
+tests/smoke-output-*/
+tests/perf-priority-*.txt
+tests/*.tmp.txt
