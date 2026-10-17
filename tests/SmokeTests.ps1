@@ -3,9 +3,11 @@ param([string]$Executable = "$PSScriptRoot\..\x64\Debug\VoiceAS.exe")
 $ErrorActionPreference = 'Stop'
 $Executable = (Resolve-Path -LiteralPath $Executable).Path
 $testDirectory = Join-Path $PSScriptRoot "smoke-output-$PID"
-$configPath = Join-Path $testDirectory 'priority.txt'
+$configPath = Join-Path $testDirectory 'priority order.txt'
 $monitor = $null
 $duplicate = $null
+$backgroundStarted = $false
+$backgroundProcess = $null
 $checks = 0
 
 function Assert-True([bool]$Condition, [string]$Description) {
@@ -65,7 +67,7 @@ try {
     if ($eligibleOrder.Count) {
         Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains($active[$eligibleOrder[0] - 1].Groups['name'].Value)) 'Monitor must select the first configured usable endpoint.'
     }
-    else { Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains('保留当前默认设备')) 'Unavailable wireless headsets must not be selected.' }
+    else { Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains('Keeping the current default output')) 'Unavailable wireless headsets must not be selected.' }
     $missing = Complete-App (Start-App @('--monitor', '--config', (Join-Path $testDirectory 'missing.txt')))
     Assert-True ($missing.Code -eq 1 -and $missing.Err.Contains('--configure')) 'Missing configuration must explain how to configure.'
     $invalid = Complete-App (Start-App @('--once'))
@@ -73,7 +75,7 @@ try {
     $menu = Complete-App (Start-App @('--config', $configPath) "0`n")
     Assert-True ($menu.Code -eq 0 -and $menu.Out.Contains('1.') -and $menu.Out.Contains('2.')) 'Both menu entries must be available.'
 
-    $monitor = Start-App @('--monitor', '--dry-run', '--config', $configPath)
+    $monitor = Start-App @('--monitor', '--foreground', '--dry-run', '--config', $configPath)
     Start-Sleep -Milliseconds 500
     Assert-True (-not $monitor.Process.HasExited) 'Listener must keep running.'
     $duplicate = Start-App @('--monitor', '--dry-run', '--once', '--config', $configPath)
@@ -90,18 +92,56 @@ try {
     [System.IO.File]::WriteAllText($configPath, $validContent)
     Start-Sleep -Milliseconds 2500
     Assert-True (-not $monitor.Process.HasExited) 'Listener must survive a malformed configuration and recover.'
-    $monitor.Process.Kill()
+    $stopForeground = Complete-App (Start-App @('--stop'))
+    Assert-True ($stopForeground.Code -eq 0) 'Remote stop must shut down the foreground listener cleanly.'
     $stopped = Complete-App $monitor
-    Assert-True ($stopped.Out.Contains('已加载新的优先顺序')) 'Listener did not reload the configuration.'
-    Assert-True ($stopped.Err.Contains('继续使用上次有效配置')) 'Malformed configuration must retain the last valid order.'
-    Assert-True ($stopped.Out.Contains('配置文件读取已恢复')) 'Listener did not recover after configuration was repaired.'
+    Assert-True ($stopped.Code -eq 0) 'Listener must release resources and exit successfully on stop.'
+    Assert-True ($stopped.Out.Contains('Loaded updated priority order')) 'Listener did not reload the configuration.'
+    Assert-True ($stopped.Err.Contains('keeping the last valid configuration')) 'Malformed configuration must retain the last valid order.'
+    Assert-True ($stopped.Out.Contains('Configuration reading recovered')) 'Listener did not recover after configuration was repaired.'
+
+    $help = Complete-App (Start-App @('--help'))
+    Assert-True ($help.Code -eq 0 -and $help.Out.Contains('Start monitoring in the background')) 'Help must describe background mode in English.'
+    Assert-True ($help.Out -notmatch '\p{IsCJKUnifiedIdeographs}') 'Built-in help must be in English.'
+    $background = Complete-App (Start-App @('--monitor', '--dry-run', '--config', $configPath))
+    Assert-True ($background.Code -eq 0 -and $background.Out.Contains('Background monitor started')) "Background launch failed: $($background.Err)"
+    $backgroundStarted = $true
+    $workerPid = [int][regex]::Match($background.Out, 'PID (\d+)').Groups[1].Value
+    $backgroundProcess = Get-Process -Id $workerPid
+    Assert-True (-not $backgroundProcess.HasExited) 'Worker must outlive the launcher.'
+    $running = Complete-App (Start-App @('--status'))
+    Assert-True ($running.Code -eq 0 -and $running.Out.Contains('is running')) 'Status must report the detached worker.'
+    $logPath = Join-Path $testDirectory 'monitor.log'
+    Assert-True (Test-Path -LiteralPath $logPath) 'Background output must be saved to a log.'
+    $logStream = [System.IO.File]::Open($logPath, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $logReader = [System.IO.StreamReader]::new($logStream, [System.Text.Encoding]::UTF8)
+    try { $logContent = $logReader.ReadToEnd() }
+    finally { $logReader.Dispose() }
+    Assert-True ($logContent.Contains('Background mode: no console window.')) 'The worker must have no console window.'
+    Assert-True ($logContent.Contains('Monitor started')) 'Worker startup must be logged before the launcher reports success.'
+    $secondBackground = Complete-App (Start-App @('--monitor', '--dry-run', '--config', $configPath))
+    Assert-True ($secondBackground.Code -eq 1 -and $secondBackground.Err.Contains('already running')) 'Starting twice must not create a second worker.'
+    $stopBackground = Complete-App (Start-App @('--stop'))
+    Assert-True ($stopBackground.Code -eq 0) 'Background worker must support graceful remote stop.'
+    Assert-True ($backgroundProcess.WaitForExit(10000)) 'Background worker must exit after stop.'
+    $backgroundStarted = $false
+    $notRunning = Complete-App (Start-App @('--status'))
+    Assert-True ($notRunning.Code -eq 1) 'Status must report that monitoring has stopped.'
+    $stopAgain = Complete-App (Start-App @('--stop'))
+    Assert-True ($stopAgain.Code -eq 0 -and $stopAgain.Out.Contains('No audio monitor')) 'Stopping twice must be safe.'
+    $invalidWorker = Complete-App (Start-App @('--monitor-worker'))
+    Assert-True ($invalidWorker.Code -eq 1) 'Internal worker mode requires a startup handshake.'
     Write-Output "PASS: $checks CLI and listener checks."
 }
 finally {
+    if ($backgroundStarted) { $null = Complete-App (Start-App @('--stop')) }
     foreach ($invocation in @($monitor, $duplicate)) {
         if ($invocation -and -not $invocation.Process.HasExited) { $invocation.Process.Kill(); $invocation.Process.WaitForExit() }
     }
     # Remove only the known test file and its now-empty directory; never recurse.
     if (Test-Path -LiteralPath $configPath) { Remove-Item -LiteralPath $configPath }
+    $logPath = Join-Path $testDirectory 'monitor.log'
+    if (Test-Path -LiteralPath $logPath) { Remove-Item -LiteralPath $logPath }
     if (Test-Path -LiteralPath $testDirectory) { Remove-Item -LiteralPath $testDirectory }
 }

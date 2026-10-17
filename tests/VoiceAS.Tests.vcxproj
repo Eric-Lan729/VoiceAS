@@ -39,6 +39,7 @@
     <ClCompile Include="PriorityTests.cpp" />
     <ClCompile Include="..\VoiceAS\AudioPriority.cpp" />
     <ClCompile Include="..\VoiceAS\AudioMonitor.cpp" />
+    <ClCompile Include="..\VoiceAS\BackgroundMonitor.cpp" />
     <ClCompile Include="..\VoiceAS\WirelessHeadset.cpp" />
     <ClCompile Include="..\VoiceAS\EnumerateVoiceDevices.cpp" />
   </ItemGroup>

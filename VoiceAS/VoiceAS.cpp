@@ -3,6 +3,7 @@
 #include "EnumerateVoiceDevices.h"
 #include "WindowsSupport.h"
 #include "WirelessHeadset.h"
+#include "BackgroundMonitor.h"
 
 #include <algorithm>
 #include <iostream>
@@ -90,7 +91,7 @@ namespace
             try { previous = LoadPriorityConfig(path); }
             catch (const std::exception& error)
             {
-                std::cerr << "旧配置无法读取，可以重新配置：" << error.what() << '\n';
+                std::cerr << "Cannot read the previous configuration; you can replace it: " << error.what() << '\n';
             }
         }
 
@@ -99,30 +100,30 @@ namespace
             auto active = EnumerateAudioOutputDevices();
             UpdateWirelessAvailability(active);
             std::erase_if(active, [](const auto& device) { return device.state != AudioDeviceState::Active; });
-            std::cout << "\n配置输出优先顺序（仅显示 Active 设备）\n"
-                << "保存后替换原有顺序；请先连接所有需要加入的设备。\n\n";
+            std::cout << "\nConfigure output priority (Active endpoints only)\n"
+                << "Saving replaces the previous order. Connect all receivers/devices you want to include first.\n\n";
             for (size_t index = 0; index < active.size(); ++index)
             {
                 const auto& device = active[index];
                 std::cout << '[' << index + 1 << "] " << ToUtf8(device.name);
                 const auto saved = std::find(previous.deviceIds.begin(), previous.deviceIds.end(), device.id);
                 if (saved != previous.deviceIds.end())
-                    std::cout << "  [已保存优先级 " << std::distance(previous.deviceIds.begin(), saved) + 1 << ']';
-                if (device.isDefaultConsole) std::cout << "  [默认播放]";
-                if (device.isDefaultCommunications) std::cout << "  [默认通信]";
+                    std::cout << "  [saved priority " << std::distance(previous.deviceIds.begin(), saved) + 1 << ']';
+                if (device.isDefaultConsole) std::cout << "  [default playback]";
+                if (device.isDefaultCommunications) std::cout << "  [default communications]";
                 if (device.wirelessState != WirelessConnectionState::NotApplicable)
-                    std::cout << "  [耳机本体 " << WirelessStateName(device.wirelessState) << ']';
+                    std::cout << "  [headset " << WirelessStateName(device.wirelessState) << ']';
                 std::cout << "\n    ID: " << ToUtf8(device.id) << '\n';
             }
-            if (active.empty()) std::cout << "当前没有 Active 的输出设备，请连接或启用设备后刷新。\n";
-            else std::cout << "无线耳机即使关机也可能保持 Active；监听时只选择本体 Online 的 ROG 耳机。\n";
-            std::cout << "\n按优先级从高到低输入序号，例如 2 1 3（也支持逗号）。\n"
-                << "可只选部分设备；未选择的设备不参与自动切换。\n"
-                << "输入 r 刷新，q 或直接回车取消：" << std::flush;
+            if (active.empty()) std::cout << "No Active output endpoints. Connect or enable a device, then refresh.\n";
+            else std::cout << "Wireless headsets may stay Active while powered off. ROG headsets must be Online to be selected.\n";
+            std::cout << "\nEnter device numbers from highest to lowest priority, e.g. 2 1 3 (commas also work).\n"
+                << "You may select a subset; unselected devices are not used for automatic switching.\n"
+                << "Enter r to refresh, q or an empty line to cancel: " << std::flush;
             std::string input;
             if (!std::getline(std::cin, input) || input.empty() || input == "q" || input == "Q")
             {
-                std::cout << "已取消，原配置保持不变。\n";
+                std::cout << "Cancelled. The previous configuration was not changed.\n";
                 return;
             }
             if (input == "r" || input == "R") continue;
@@ -131,7 +132,7 @@ namespace
             try { order = ParseDeviceOrder(input, active.size()); }
             catch (const std::exception& error)
             {
-                std::cerr << "输入无效：" << error.what() << '\n';
+                std::cerr << "Invalid input: " << error.what() << '\n';
                 continue;
             }
 
@@ -145,7 +146,7 @@ namespace
             });
             if (!stillActive)
             {
-                std::cout << "选择的设备状态已经改变，已刷新列表，请重新选择。\n";
+                std::cout << "A selected endpoint changed state. Refreshing the list; please select again.\n";
                 continue;
             }
 
@@ -154,57 +155,61 @@ namespace
             for (const auto index : order) config.deviceIds.push_back(active[index].id);
             for (;;)
             {
-                std::cout << "是否同时切换通信设备（语音/通话）？"
-                    << (previous.includeCommunications ? " [Y/n]：" : " [y/N]：") << std::flush;
+                std::cout << "Also switch the communications output (voice/calls)?"
+                    << (previous.includeCommunications ? " [Y/n]: " : " [y/N]: ") << std::flush;
                 if (!std::getline(std::cin, input))
                 {
-                    std::cout << "\n已取消，原配置保持不变。\n";
+                    std::cout << "\nCancelled. The previous configuration was not changed.\n";
                     return;
                 }
                 if (input.empty()) break;
                 if (input == "y" || input == "Y") { config.includeCommunications = true; break; }
                 if (input == "n" || input == "N") { config.includeCommunications = false; break; }
-                std::cout << "请输入 y 或 n。\n";
+                std::cout << "Please enter y or n.\n";
             }
 
             SavePriorityConfig(path, config);
-            std::cout << "\n优先顺序已保存：\n";
+            std::cout << "\nPriority order saved:\n";
             for (size_t priority = 0; priority < order.size(); ++priority)
                 std::cout << priority + 1 << ". " << ToUtf8(active[order[priority]].name) << '\n';
-            std::cout << "通信设备：" << (config.includeCommunications ? "跟随切换" : "保持独立")
-                << "\n配置文件：" << ToUtf8(path.wstring()) << "\n打开监听入口即可开始自动切换。\n";
+            std::cout << "Communications output: " << (config.includeCommunications ? "follows priority order" : "kept independent")
+                << "\nConfiguration: " << ToUtf8(path.wstring()) << "\nRun Monitor.cmd to start automatic switching in the background.\n";
             return;
         }
     }
 
     void PrintHelp()
     {
-        std::cout << "VoiceAS - 音频输出优先级切换\n\n"
-            << "VoiceAS.exe                打开菜单\n"
-            << "VoiceAS.exe --configure    配置优先顺序（仅 Active 设备）\n"
-            << "VoiceAS.exe --monitor      开始监听并自动切换；Ctrl+C 停止\n"
-            << "VoiceAS.exe --list         列出所有状态的输出设备\n"
-            << "VoiceAS.exe --headset-status  查询 ROG 耳机本体连接状态\n"
-            << "VoiceAS.exe --monitor --dry-run          预览监听，不修改默认设备\n"
-            << "VoiceAS.exe --monitor --dry-run --once   检查一次后退出\n"
-            << "附加参数：--config <路径> 指定配置文件\n";
+        std::cout << "VoiceAS - audio output priority switching\n\n"
+            << "VoiceAS.exe                Open the menu\n"
+            << "VoiceAS.exe --configure    Configure priority (Active endpoints only)\n"
+            << "VoiceAS.exe --monitor      Start monitoring in the background\n"
+            << "VoiceAS.exe --stop         Stop the running monitor\n"
+            << "VoiceAS.exe --status       Check whether a monitor is running\n"
+            << "VoiceAS.exe --list         List output endpoints in every state\n"
+            << "VoiceAS.exe --headset-status  Query ROG headset readiness\n"
+            << "VoiceAS.exe --monitor --foreground      Monitor in this console; Ctrl+C to stop\n"
+            << "VoiceAS.exe --monitor --foreground --dry-run   Preview without changing outputs\n"
+            << "VoiceAS.exe --monitor --dry-run --once   Inspect once and exit\n"
+            << "Optional: --config <path> selects a configuration file\n";
     }
 
     void Menu(const std::filesystem::path& path)
     {
         for (;;)
         {
-            std::cout << "\nVoiceAS\n1. 配置设备优先顺序\n2. 开始监听并自动切换\n3. 列出所有输出设备\n0. 退出\n选择：" << std::flush;
+            std::cout << "\nVoiceAS\n1. Configure output priority\n2. Start background monitor\n3. List all output devices\n4. Stop monitor\n0. Exit\nChoose: " << std::flush;
             std::string choice;
             if (!std::getline(std::cin, choice) || choice == "0") return;
             try
             {
                 if (choice == "1") Configure(path);
-                else if (choice == "2") RunAudioMonitor(path);
+                else if (choice == "2") StartBackgroundMonitor(path);
                 else if (choice == "3") ListDevices();
-                else std::cout << "请输入 0、1、2 或 3。\n";
+                else if (choice == "4") StopAudioMonitor();
+                else std::cout << "Please enter 0, 1, 2, 3 or 4.\n";
             }
-            catch (const std::exception& error) { std::cerr << "操作失败：" << error.what() << '\n'; }
+            catch (const std::exception& error) { std::cerr << "Operation failed: " << error.what() << '\n'; }
             if (!std::cin) return;
         }
     }
@@ -219,6 +224,8 @@ int wmain(int argc, wchar_t* argv[])
         std::filesystem::path configPath;
         bool dryRun = false;
         bool once = false;
+        bool foreground = false;
+        std::wstring readyEventName;
         for (int index = 1; index < argc; ++index)
         {
             const std::wstring argument = argv[index];
@@ -230,29 +237,58 @@ int wmain(int argc, wchar_t* argv[])
             }
             else if (argument == L"--dry-run") dryRun = true;
             else if (argument == L"--once") once = true;
+            else if (argument == L"--foreground") foreground = true;
+            else if (argument == L"--ready-event")
+            {
+                if (++index == argc || !readyEventName.empty()) throw std::runtime_error("Invalid startup event argument.");
+                readyEventName = argv[index];
+            }
             else if (argument == L"--configure" || argument == L"--monitor" || argument == L"--list"
-                || argument == L"--headset-status" || argument == L"--help" || argument == L"-h")
+                || argument == L"--headset-status" || argument == L"--help" || argument == L"-h"
+                || argument == L"--monitor-worker" || argument == L"--stop" || argument == L"--status")
             {
                 if (!command.empty()) throw std::runtime_error("Choose one command; see --help.");
                 command = argument;
             }
             else throw std::runtime_error("Unknown argument; see --help.");
         }
-        if ((dryRun || once) && command != L"--monitor")
-            throw std::runtime_error("--dry-run and --once require --monitor.");
+        if ((dryRun || once || foreground) && command != L"--monitor" && command != L"--monitor-worker")
+            throw std::runtime_error("--dry-run, --once and --foreground require --monitor.");
+        if (command == L"--monitor-worker" && (readyEventName.empty() || once || foreground))
+            throw std::runtime_error("Invalid internal monitor startup arguments.");
+        if (!readyEventName.empty() && command != L"--monitor-worker")
+            throw std::runtime_error("Startup events are only used by the background worker.");
         if (command == L"--help" || command == L"-h") { PrintHelp(); return 0; }
         if (command == L"--list") { ListDevices(); return 0; }
         if (command == L"--headset-status") { HeadsetStatus(); return 0; }
+        if (command == L"--stop") { StopAudioMonitor(); return 0; }
+        if (command == L"--status")
+        {
+            const bool running = IsAudioMonitorRunning();
+            std::cout << (running ? "Audio monitor is running.\n" : "No audio monitor is running.\n");
+            return running ? 0 : 1;
+        }
         if (configPath.empty()) configPath = DefaultConfigPath();
         configPath = std::filesystem::absolute(configPath);
         if (command == L"--configure") Configure(configPath);
-        else if (command == L"--monitor") RunAudioMonitor(configPath, dryRun, once);
+        else if (command == L"--monitor-worker")
+        {
+            if (GetConsoleWindow() != nullptr)
+                throw std::runtime_error("The background worker must run without a console window.");
+            std::cout << "Background mode: no console window.\n";
+            RunAudioMonitor(configPath, dryRun, false, readyEventName);
+        }
+        else if (command == L"--monitor")
+        {
+            if (foreground || once) RunAudioMonitor(configPath, dryRun, once);
+            else StartBackgroundMonitor(configPath, dryRun);
+        }
         else Menu(configPath);
         return 0;
     }
     catch (const std::exception& error)
     {
-        std::cerr << "操作失败：" << error.what() << '\n';
+        std::cerr << "Operation failed: " << error.what() << '\n';
         return 1;
     }
 }

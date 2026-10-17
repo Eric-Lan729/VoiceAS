@@ -33,7 +33,7 @@ device={0.0.0.00000000}.{5cb033c0-de9a-4524-86c4-46a54a2dcaed}
     $info.RedirectStandardError = $true
     $info.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $info.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
-    foreach ($argument in @('--monitor', '--dry-run', '--config', $configPath)) { $info.ArgumentList.Add($argument) }
+    foreach ($argument in @('--monitor', '--foreground', '--dry-run', '--config', $configPath)) { $info.ArgumentList.Add($argument) }
     $process = [System.Diagnostics.Process]::Start($info)
     $ownsProcess = $true
     $mode = 'Preview; full enumeration and real HID queries; no routing changes'

@@ -2,6 +2,7 @@
 #include "AudioPriority.h"
 #include "WindowsSupport.h"
 #include "WirelessHeadset.h"
+#include "BackgroundMonitor.h"
 
 #include <mmdeviceapi.h>
 #include <mmreg.h>
@@ -53,9 +54,9 @@ namespace
         return TRUE;
     }
 
-    SharedHandle MakeEvent(bool manualReset)
+    SharedHandle MakeEvent(bool manualReset, const wchar_t* name = nullptr)
     {
-        SharedHandle event(CreateEventW(nullptr, manualReset, FALSE, nullptr), HandleDeleter{});
+        SharedHandle event(CreateEventW(nullptr, manualReset, FALSE, name), HandleDeleter{});
         if (!event) throw std::runtime_error("Unable to create monitor event.");
         return event;
     }
@@ -144,23 +145,31 @@ void SetDefaultOutputDevice(const AudioOutputDevice& device, bool includeCommuni
         CheckResult(policy->SetDefaultEndpoint(device.id.c_str(), eCommunications), "Set default communications output");
 }
 
-void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool once)
+void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool once,
+    const std::wstring& readyEventName)
 {
     auto config = LoadPriorityConfig(configPath); // Fail clearly before starting if never configured.
     const ComApartment apartment;
-    UniqueHandle instance(CreateMutexW(nullptr, FALSE, L"Local\\VoiceAS.AudioOutputMonitor"));
+    UniqueHandle instance(CreateMutexW(nullptr, FALSE, MonitorMutexName));
     const DWORD instanceError = GetLastError();
     if (!instance) throw std::runtime_error("Unable to create monitor instance lock.");
     if (instanceError == ERROR_ALREADY_EXISTS)
         throw std::runtime_error("An audio monitor is already running in this Windows session.");
 
-    const auto stop = MakeEvent(true);
+    const auto stop = MakeEvent(true, MonitorStopEventName);
+    if (!ResetEvent(stop.get())) ThrowWin32Error("Reset monitor stop event");
     const auto changed = MakeEvent(false);
     const ConsoleControlRegistration controls(stop.get());
     const NotificationRegistration notifications(changed);
-    std::cout << "监听已启动" << (dryRun ? "（预览模式，不切换设备）" : "") << "。Ctrl+C 停止。\n"
-        << "配置文件：" << ToUtf8(configPath.wstring()) << '\n'
-        << "配置更新后自动生效；ROG 无线耳机需同时处于 Online 状态。\n" << std::flush;
+    std::cout << "Monitor started" << (dryRun ? " (preview mode; no routing changes)" : "")
+        << ". Use --stop to stop it; Ctrl+C also works in foreground mode.\n"
+        << "Configuration: " << ToUtf8(configPath.wstring()) << '\n'
+        << "Configuration changes are reloaded automatically. ROG wireless headsets must also be Online.\n" << std::flush;
+    if (!readyEventName.empty())
+    {
+        const UniqueHandle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, readyEventName.c_str()));
+        if (!ready || !SetEvent(ready.get())) ThrowWin32Error("Report monitor startup");
+    }
 
     std::string previousStatus;
     std::string previousConfigError;
@@ -183,9 +192,9 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
             {
                 config = updated;
                 previousStatus.clear();
-                std::cout << "已加载新的优先顺序。\n" << std::flush;
+                std::cout << "Loaded updated priority order.\n" << std::flush;
             }
-            if (!previousConfigError.empty()) std::cout << "配置文件读取已恢复。\n" << std::flush;
+            if (!previousConfigError.empty()) std::cout << "Configuration reading recovered.\n" << std::flush;
             previousConfigError.clear();
         }
         catch (const std::exception& error)
@@ -194,7 +203,7 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
             if (previousConfigError != error.what())
             {
                 previousConfigError = error.what();
-                std::cerr << "配置读取失败，继续使用上次有效配置：" << error.what() << '\n';
+                std::cerr << "Cannot read configuration; keeping the last valid configuration: " << error.what() << '\n';
             }
         }
 
@@ -210,23 +219,23 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
                 const auto previous = previousWirelessStates.find(device.id);
                 if (previous == previousWirelessStates.end() || previous->second != device.wirelessState)
                 {
-                    std::cout << "无线连接：" << ToUtf8(device.name) << " -> " << WirelessStateName(device.wirelessState);
+                    std::cout << "Wireless connection: " << ToUtf8(device.name) << " -> " << WirelessStateName(device.wirelessState);
                     if (device.wirelessState == WirelessConnectionState::Unknown)
-                        std::cout << "（状态查询失败，暂不选择）：" << device.wirelessDetail;
+                        std::cout << " (status query failed; skipping device): " << device.wirelessDetail;
                     std::cout << '\n' << std::flush;
                     previousWirelessStates[device.id] = device.wirelessState;
                 }
             }
             const auto preferred = FindPreferredDevice(config, devices);
             if (!preferred)
-                report("配置中的设备均不可用或无线耳机未连接，保留当前默认设备，等待设备连接。");
+                report("No configured device is ready. Keeping the current default output and waiting for a connection.");
             else
             {
                 const auto& device = devices[*preferred];
                 const bool alreadyDefault = device.isDefaultConsole && device.isDefaultMultimedia
                     && (!config.includeCommunications || device.isDefaultCommunications);
                 if (dryRun)
-                    report("优先设备：" + ToUtf8(device.name) + (alreadyDefault ? "（已是默认设备）" : "（将切换到此设备）"));
+                    report("Preferred output: " + ToUtf8(device.name) + (alreadyDefault ? " (already default)" : " (would switch to this device)"));
                 else
                 {
                     if (!alreadyDefault)
@@ -242,14 +251,14 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
                         if (!applied) throw std::runtime_error("Default output changed during switching; will retry.");
                         previousStatus.clear();
                     }
-                    report("当前优先设备：" + ToUtf8(device.name));
+                    report("Current preferred output: " + ToUtf8(device.name));
                 }
             }
         }
         catch (const std::exception& error)
         {
             if (once) throw;
-            report(std::string("音频操作失败，稍后重试：") + error.what());
+            report(std::string("Audio operation failed; will retry: ") + error.what());
         }
         if (once) break;
 
@@ -261,5 +270,5 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
         if (result == WAIT_FAILED) throw std::runtime_error("Failed to wait for audio device events.");
         if (result == WAIT_OBJECT_0 + 1 && WaitForSingleObject(stop.get(), 150) == WAIT_OBJECT_0) break;
     }
-    std::cout << "监听已停止。\n";
+    std::cout << "Monitor stopped.\n";
 }

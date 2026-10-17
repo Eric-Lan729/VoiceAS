@@ -145,6 +145,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AudioMonitor.cpp" />
+    <ClCompile Include="BackgroundMonitor.cpp" />
     <ClCompile Include="WirelessHeadset.cpp" />
     <ClCompile Include="AudioPriority.cpp" />
     <ClCompile Include="EnumerateVoiceDevices.cpp" />
@@ -152,6 +153,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioMonitor.h" />
+    <ClInclude Include="BackgroundMonitor.h" />
     <ClInclude Include="WirelessHeadset.h" />
     <ClInclude Include="AudioPriority.h" />
     <ClInclude Include="EnumerateVoiceDevices.h" />
@@ -160,10 +162,11 @@
   <ItemGroup>
     <None Include="Configure.cmd" />
     <None Include="Monitor.cmd" />
+    <None Include="StopMonitor.cmd" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="CopyLaunchers" AfterTargets="Build">
-    <Copy SourceFiles="$(ProjectDir)Configure.cmd;$(ProjectDir)Monitor.cmd" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(ProjectDir)Configure.cmd;$(ProjectDir)Monitor.cmd;$(ProjectDir)StopMonitor.cmd" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
   </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

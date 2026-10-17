@@ -90,7 +90,7 @@ void SavePriorityConfig(const std::filesystem::path& path, const AudioPriorityCo
         if (!output) throw std::runtime_error("Failed to save priority configuration.");
         // Readers see either the complete old file or the complete new file.
         if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Save configuration");
+            windows_support::ThrowWin32Error("Save configuration");
     }
     catch (...)
     {

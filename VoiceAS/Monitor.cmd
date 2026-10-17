@@ -1,3 +1,6 @@
 @echo off
 "%~dp0VoiceAS.exe" --monitor %*
-if errorlevel 1 pause
+if errorlevel 1 (
+    echo Press any key to close this window...
+    pause >nul
+)

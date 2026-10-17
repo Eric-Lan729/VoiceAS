@@ -12,6 +12,11 @@
 
 namespace windows_support
 {
+    [[noreturn]] inline void ThrowWin32Error(const char* operation, DWORD error = GetLastError())
+    {
+        throw std::runtime_error(std::string(operation) + " failed (Windows error " + std::to_string(error) + ").");
+    }
+
     inline void CheckResult(HRESULT result, const char* operation)
     {
         if (FAILED(result))

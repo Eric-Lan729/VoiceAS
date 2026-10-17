@@ -63,7 +63,7 @@ namespace
         {
             const DWORD error = GetLastError();
             if (error != ERROR_IO_PENDING)
-                throw std::system_error(static_cast<int>(error), std::system_category(), "HID I/O");
+                ThrowWin32Error("HID I/O", error);
             if (WaitForSingleObject(event.get(), timeout) != WAIT_OBJECT_0)
             {
                 CancelIoEx(device, &operation);
@@ -72,7 +72,7 @@ namespace
                 throw std::runtime_error("HID status query timed out.");
             }
             if (!GetOverlappedResult(device, &operation, &transferred, FALSE))
-                throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "HID completion");
+                ThrowWin32Error("HID completion");
         }
         return transferred;
     }

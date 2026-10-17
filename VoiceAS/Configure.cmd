@@ -1,3 +1,4 @@
 @echo off
 "%~dp0VoiceAS.exe" --configure %*
-pause
+echo Press any key to close this window...
+pause >nul

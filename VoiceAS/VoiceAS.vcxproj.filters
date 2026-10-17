@@ -21,6 +21,9 @@
     <ClCompile Include="AudioMonitor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="BackgroundMonitor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="WirelessHeadset.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -33,6 +36,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioMonitor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BackgroundMonitor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="WirelessHeadset.h">
@@ -51,5 +57,6 @@
   <ItemGroup>
     <None Include="Configure.cmd" />
     <None Include="Monitor.cmd" />
+    <None Include="StopMonitor.cmd" />
   </ItemGroup>
 </Project>
