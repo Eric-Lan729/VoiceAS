@@ -1,7 +1,6 @@
 #include "AudioMonitor.h"
 #include "AudioPriority.h"
 #include "WindowsSupport.h"
-#include "WirelessHeadset.h"
 #include "BackgroundMonitor.h"
 
 #include <mmdeviceapi.h>
@@ -11,8 +10,6 @@
 #include <atomic>
 #include <iostream>
 #include <memory>
-#include <map>
-#include <algorithm>
 
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "Uuid.lib")
@@ -164,7 +161,7 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
     std::cout << "Monitor started" << (dryRun ? " (preview mode; no routing changes)" : "")
         << ". Use --stop to stop it; Ctrl+C also works in foreground mode.\n"
         << "Configuration: " << ToUtf8(configPath.wstring()) << '\n'
-        << "Configuration changes are reloaded automatically. ROG wireless headsets must also be Online.\n" << std::flush;
+        << "Configuration changes are reloaded automatically. Only Active output endpoints are selected.\n" << std::flush;
     if (!readyEventName.empty())
     {
         const UniqueHandle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, readyEventName.c_str()));
@@ -173,7 +170,6 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
 
     std::string previousStatus;
     std::string previousConfigError;
-    std::map<std::wstring, WirelessConnectionState> previousWirelessStates;
     const auto report = [&](const std::string& status)
     {
         if (status != previousStatus)
@@ -209,26 +205,10 @@ void RunAudioMonitor(const std::filesystem::path& configPath, bool dryRun, bool 
 
         try
         {
-            auto devices = EnumerateAudioOutputDevices();
-            UpdateWirelessAvailability(devices);
-            for (const auto& device : devices)
-            {
-                if (device.wirelessState == WirelessConnectionState::NotApplicable
-                    || std::find(config.deviceIds.begin(), config.deviceIds.end(), device.id) == config.deviceIds.end())
-                    continue;
-                const auto previous = previousWirelessStates.find(device.id);
-                if (previous == previousWirelessStates.end() || previous->second != device.wirelessState)
-                {
-                    std::cout << "Wireless connection: " << ToUtf8(device.name) << " -> " << WirelessStateName(device.wirelessState);
-                    if (device.wirelessState == WirelessConnectionState::Unknown)
-                        std::cout << " (status query failed; skipping device): " << device.wirelessDetail;
-                    std::cout << '\n' << std::flush;
-                    previousWirelessStates[device.id] = device.wirelessState;
-                }
-            }
+            const auto devices = EnumerateAudioOutputDevices();
             const auto preferred = FindPreferredDevice(config, devices);
             if (!preferred)
-                report("No configured device is ready. Keeping the current default output and waiting for a connection.");
+                report("No configured device is Active. Keeping the current default output and waiting for a connection.");
             else
             {
                 const auto& device = devices[*preferred];

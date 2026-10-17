@@ -19,12 +19,13 @@ try {
     }
     else {
     # A temporary priority list; preview mode never modifies default audio routing.
-    [System.IO.File]::WriteAllText($configPath, @"
-VoiceAS priority v1
-communications=0
-device={0.0.0.00000000}.{415b1fc3-bce0-4287-b3f9-a4e6e66dad3f}
-device={0.0.0.00000000}.{5cb033c0-de9a-4524-86c4-46a54a2dcaed}
-"@, [System.Text.UTF8Encoding]::new($false))
+    $deviceList = (& $Executable --list) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw 'Device enumeration failed.' }
+    $active = @([regex]::Matches($deviceList, '(?m)^\s+ID: (?<id>[^\r\n]+)\r?\n\s+State: Active\r?$'))
+    if (-not $active.Count) { throw 'Sampling needs an Active output endpoint.' }
+    $entries = @('VoiceAS priority v1', 'communications=0')
+    $entries += @($active | ForEach-Object { 'device=' + $_.Groups['id'].Value })
+    [System.IO.File]::WriteAllText($configPath, ($entries -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
     $info = [System.Diagnostics.ProcessStartInfo]::new($Executable)
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
@@ -36,7 +37,7 @@ device={0.0.0.00000000}.{5cb033c0-de9a-4524-86c4-46a54a2dcaed}
     foreach ($argument in @('--monitor', '--foreground', '--dry-run', '--config', $configPath)) { $info.ArgumentList.Add($argument) }
     $process = [System.Diagnostics.Process]::Start($info)
     $ownsProcess = $true
-    $mode = 'Preview; full enumeration and real HID queries; no routing changes'
+    $mode = 'Preview; Windows endpoint enumeration; no routing changes'
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
     Start-Sleep -Seconds 2

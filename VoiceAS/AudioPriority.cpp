@@ -125,9 +125,7 @@ std::optional<size_t> FindPreferredDevice(const AudioPriorityConfig& config,
 {
     for (const auto& id : config.deviceIds)
         for (size_t index = 0; index < devices.size(); ++index)
-            if (devices[index].id == id && devices[index].state == AudioDeviceState::Active
-                && devices[index].wirelessState != WirelessConnectionState::Offline
-                && devices[index].wirelessState != WirelessConnectionState::Unknown)
+            if (devices[index].id == id && devices[index].state == AudioDeviceState::Active)
                 return index;
     return std::nullopt;
 }

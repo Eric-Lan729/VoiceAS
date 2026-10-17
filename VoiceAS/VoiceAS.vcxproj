@@ -146,7 +146,6 @@
   <ItemGroup>
     <ClCompile Include="AudioMonitor.cpp" />
     <ClCompile Include="BackgroundMonitor.cpp" />
-    <ClCompile Include="WirelessHeadset.cpp" />
     <ClCompile Include="AudioPriority.cpp" />
     <ClCompile Include="EnumerateVoiceDevices.cpp" />
     <ClCompile Include="VoiceAS.cpp" />
@@ -154,7 +153,6 @@
   <ItemGroup>
     <ClInclude Include="AudioMonitor.h" />
     <ClInclude Include="BackgroundMonitor.h" />
-    <ClInclude Include="WirelessHeadset.h" />
     <ClInclude Include="AudioPriority.h" />
     <ClInclude Include="EnumerateVoiceDevices.h" />
     <ClInclude Include="WindowsSupport.h" />

@@ -1,6 +1,6 @@
 # VoiceAS
 
-A Windows C++20 utility that automatically selects your preferred available audio output. Configure a priority order once, then run the monitor in the background. ROG Delta II support also checks whether the headset itself is connected, even when its USB receiver keeps the Windows audio endpoint Active.
+A Windows C++20 utility that automatically selects your preferred Active audio output. Configure a priority order once, then run the monitor in the background. Bluetooth, wired, and USB receiver outputs all follow the same Windows endpoint state and priority rules.
 
 ## Build
 
@@ -64,38 +64,18 @@ For live diagnostics in a terminal:
 
 ## Switching rules
 
-- For an order A, B, C, select the first configured endpoint that is Active and ready. A supported ROG wireless headset must additionally be Online.
-- If A becomes unavailable, fall back to B. If A becomes ready again, switch back to A.
+- For an order A, B, C, select the first configured endpoint whose Windows state is Active.
+- If A becomes unavailable, fall back to B. If A becomes Active again, switch back to A.
 - Disabled, unplugged, and missing endpoints are skipped while their IDs remain in the saved configuration.
-- If none of the configured devices are ready, keep the current Windows default and continue waiting. Unconfigured outputs are not selected automatically.
+- If none of the configured devices are Active, keep the current Windows default and continue waiting. Unconfigured outputs are not selected automatically.
 - Console and Multimedia playback roles follow the priority list. Communications follows it only if enabled during configuration.
 - Manual changes to the default output are also corrected to match the priority list while monitoring is running. Stop the monitor to choose an output manually.
-- Device notifications trigger re-evaluation. A roughly **2-second** check cycle also updates wireless readiness, reloads configuration changes, and retries temporary failures. Query timeouts can add latency.
+- Device notifications trigger re-evaluation. A roughly **2-second** check cycle also reloads configuration changes, retries temporary failures, and recovers from missed notifications.
 - Saving a new configuration replaces the entire previous priority list. Connect any receivers/devices you want to include before configuring.
 
 VoiceAS changes Windows default outputs. Applications explicitly configured to use a particular device may keep using that device.
 
-## ROG Delta II power/readiness detection
-
-Windows `Active` indicates that an audio endpoint is usable; a 2.4 GHz receiver may remain Active while its headset is powered off. VoiceAS queries the ROG Delta II receiver's HID interface (**VID `0B05`, PID `1AFA`**) and matches it to the audio endpoint through the Windows Container ID.
-
-| Headset status | Behavior |
-| --- | --- |
-| `Online` | A valid readiness/battery response was received; the headset may be selected. |
-| `Offline` | The receiver explicitly reports that the headset is not ready; select the next available configured output. |
-| `Unknown` | Access failed, the query timed out, or the response was invalid; log the reason and skip the headset for now. |
-
-Switching the headset off or losing its wireless connection triggers fallback. Turning it on and reconnecting to the receiver restores its configured priority. Put the headset before your speakers and include at least one fallback output. If the headset is your only configured output, the usual "keep the current Windows default" rule still applies when it is unavailable.
-
-Configuration continues to list Active Windows endpoints, with an extra headset status label. A powered-off headset can therefore be added to the order while its receiver remains connected.
-
-Inspect headset readiness without changing defaults:
-
-```powershell
-.\VoiceAS.exe --headset-status
-```
-
-Only the battery/readiness GET query is sent; sound settings, RGB, sleep settings, and firmware are not modified. Other headset models use standard Windows endpoint state detection.
+Availability follows the Windows endpoint state regardless of connection type. A USB receiver that remains Active is eligible even when its headset is powered off. VoiceAS does not query headset power or battery status or identify the wireless transport. Bluetooth and wired outputs are selected or skipped as Windows reports their state changes.
 
 ## Configuration
 
@@ -119,7 +99,7 @@ Use a custom path for a separate configuration and log directory:
 .\VoiceAS.exe --help
 ```
 
-The full list includes output endpoint IDs, state, default roles, and supported wireless headset readiness. It includes speakers, headphones, HDMI, and virtual outputs; microphones are excluded.
+The full list includes output endpoint IDs, Windows state, and default roles. It includes speakers, headphones, HDMI, and virtual outputs; microphones are excluded.
 
 | Windows state | Meaning |
 | --- | --- |
@@ -134,19 +114,16 @@ Successful commands return exit code 0; failures return 1. `--status` returns 0 
 
 | Files | Responsibility |
 | --- | --- |
-| `EnumerateVoiceDevices.h/.cpp` | Endpoint enumeration, properties, default roles, and Container IDs. |
+| `EnumerateVoiceDevices.h/.cpp` | Endpoint enumeration, names, Windows states, and default roles. |
 | `AudioPriority.h/.cpp` | Priority selection, order input, and configuration persistence. |
-| `AudioMonitor.h/.cpp` | Notifications, switching, readiness checks, reloads, and retries. |
+| `AudioMonitor.h/.cpp` | Notifications, switching, reloads, and retries. |
 | `BackgroundMonitor.h/.cpp` | Detached worker startup, log redirection, startup handshake, and graceful remote stop. |
-| `WirelessHeadset.h/.cpp` | ROG HID queries, response validation, and endpoint matching. |
 | `WindowsSupport.h` | COM, handles, UTF-8 conversion, and English error formatting. |
 | `VoiceAS.cpp` | English menu, configuration UI, and command-line entry points. |
 
 Enumeration uses [IMMDeviceEnumerator::EnumAudioEndpoints](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-enumaudioendpoints) with `eRender` and `DEVICE_STATEMASK_ALL`. [IMMNotificationClient](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immnotificationclient) callbacks only signal the main loop. Background startup uses [CREATE_NO_WINDOW](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags) with explicitly inherited log/input handles.
 
 Default-device changes use the undocumented `IPolicyConfig::SetDefaultEndpoint`, isolated in `AudioMonitor.cpp`; the ABI is referenced from [PolicyConfig declarations](https://github.com/amate/SetDefaultAudioDevice/blob/master/PolicyConfig.h). Recheck compatibility after major Windows changes.
-
-ROG command and response formats were checked against [G-Helper's headset implementation](https://github.com/seerge/g-helper/blob/main/app/Peripherals/Headset/AsusHeadset.cs). Physical off/on checks on a ROG Delta II confirmed an unavailable response (`CC 12 07 00 00 FF AA ...`) while off and a valid battery response while connected.
 
 ## Tests
 
@@ -163,7 +140,7 @@ msbuild .\tests\VoiceAS.Tests.vcxproj /p:Configuration=Debug /p:Platform=x64
 .\tests\SmokeTests.ps1 -Executable .\x64\Release\VoiceAS.exe
 ```
 
-Tests cover fallback and reconnection, duplicate names, unavailable devices, invalid order input, configuration corruption, recorded ROG power-state replies, malformed HID packets, and query failures. Background checks verify that the worker outlives its launcher, has no console window, writes logs, rejects duplicate instances, and stops gracefully. Automated tests do not control the physical headset power switch.
+Tests cover fallback and reconnection, uniform Active-state selection for Bluetooth, wired, and USB receiver endpoints, duplicate names, unavailable devices, invalid order input, and configuration corruption. Background checks verify that the worker outlives its launcher, has no console window, writes logs, rejects duplicate instances, and stops gracefully. Automated tests simulate endpoint state changes; they do not physically connect or disconnect devices.
 
 To sample an existing listener without stopping it:
 

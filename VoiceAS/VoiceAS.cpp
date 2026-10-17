@@ -2,7 +2,6 @@
 #include "AudioPriority.h"
 #include "EnumerateVoiceDevices.h"
 #include "WindowsSupport.h"
-#include "WirelessHeadset.h"
 #include "BackgroundMonitor.h"
 
 #include <algorithm>
@@ -41,8 +40,7 @@ namespace
 
     void ListDevices()
     {
-        auto devices = EnumerateAudioOutputDevices();
-        UpdateWirelessAvailability(devices);
+        const auto devices = EnumerateAudioOutputDevices();
         std::cout << "Audio output devices: " << devices.size() << "\n\n";
         for (size_t index = 0; index < devices.size(); ++index)
         {
@@ -50,36 +48,10 @@ namespace
             std::cout << '[' << index + 1 << "] " << ToUtf8(device.name) << '\n'
                 << "    ID: " << ToUtf8(device.id) << '\n'
                 << "    State: " << StateName(device.state) << '\n';
-            if (device.wirelessState != WirelessConnectionState::NotApplicable)
-                std::cout << "    Wireless: " << WirelessStateName(device.wirelessState) << '\n';
             if (device.isDefaultConsole) std::cout << "    Default: Console\n";
             if (device.isDefaultMultimedia) std::cout << "    Default: Multimedia\n";
             if (device.isDefaultCommunications) std::cout << "    Default: Communications\n";
             std::cout << '\n';
-        }
-    }
-
-    void HeadsetStatus()
-    {
-        auto devices = EnumerateAudioOutputDevices();
-        UpdateWirelessAvailability(devices);
-        bool found = false;
-        for (const auto& device : devices)
-        {
-            if (device.wirelessState == WirelessConnectionState::NotApplicable) continue;
-            found = true;
-            std::cout << ToUtf8(device.name) << "\n    Windows: " << StateName(device.state)
-                << "\n    Wireless: " << WirelessStateName(device.wirelessState)
-                << "\n    Container: " << ToUtf8(device.containerId)
-                << "\n    Battery: " << device.batteryPercent
-                << "\n    Detail: " << device.wirelessDetail << '\n';
-        }
-        if (!found)
-        {
-            std::cout << "No matching ROG wireless audio endpoint. HID diagnostics:\n";
-            for (const auto& status : QueryWirelessHeadsets())
-                std::cout << ToUtf8(status.containerId) << " " << WirelessStateName(status.state)
-                    << " " << status.detail << '\n';
         }
     }
 
@@ -98,7 +70,6 @@ namespace
         for (;;)
         {
             auto active = EnumerateAudioOutputDevices();
-            UpdateWirelessAvailability(active);
             std::erase_if(active, [](const auto& device) { return device.state != AudioDeviceState::Active; });
             std::cout << "\nConfigure output priority (Active endpoints only)\n"
                 << "Saving replaces the previous order. Connect all receivers/devices you want to include first.\n\n";
@@ -111,12 +82,9 @@ namespace
                     std::cout << "  [saved priority " << std::distance(previous.deviceIds.begin(), saved) + 1 << ']';
                 if (device.isDefaultConsole) std::cout << "  [default playback]";
                 if (device.isDefaultCommunications) std::cout << "  [default communications]";
-                if (device.wirelessState != WirelessConnectionState::NotApplicable)
-                    std::cout << "  [headset " << WirelessStateName(device.wirelessState) << ']';
                 std::cout << "\n    ID: " << ToUtf8(device.id) << '\n';
             }
             if (active.empty()) std::cout << "No Active output endpoints. Connect or enable a device, then refresh.\n";
-            else std::cout << "Wireless headsets may stay Active while powered off. ROG headsets must be Online to be selected.\n";
             std::cout << "\nEnter device numbers from highest to lowest priority, e.g. 2 1 3 (commas also work).\n"
                 << "You may select a subset; unselected devices are not used for automatic switching.\n"
                 << "Enter r to refresh, q or an empty line to cancel: " << std::flush;
@@ -187,7 +155,6 @@ namespace
             << "VoiceAS.exe --stop         Stop the running monitor\n"
             << "VoiceAS.exe --status       Check whether a monitor is running\n"
             << "VoiceAS.exe --list         List output endpoints in every state\n"
-            << "VoiceAS.exe --headset-status  Query ROG headset readiness\n"
             << "VoiceAS.exe --monitor --foreground      Monitor in this console; Ctrl+C to stop\n"
             << "VoiceAS.exe --monitor --foreground --dry-run   Preview without changing outputs\n"
             << "VoiceAS.exe --monitor --dry-run --once   Inspect once and exit\n"
@@ -244,7 +211,7 @@ int wmain(int argc, wchar_t* argv[])
                 readyEventName = argv[index];
             }
             else if (argument == L"--configure" || argument == L"--monitor" || argument == L"--list"
-                || argument == L"--headset-status" || argument == L"--help" || argument == L"-h"
+                || argument == L"--help" || argument == L"-h"
                 || argument == L"--monitor-worker" || argument == L"--stop" || argument == L"--status")
             {
                 if (!command.empty()) throw std::runtime_error("Choose one command; see --help.");
@@ -260,7 +227,6 @@ int wmain(int argc, wchar_t* argv[])
             throw std::runtime_error("Startup events are only used by the background worker.");
         if (command == L"--help" || command == L"-h") { PrintHelp(); return 0; }
         if (command == L"--list") { ListDevices(); return 0; }
-        if (command == L"--headset-status") { HeadsetStatus(); return 0; }
         if (command == L"--stop") { StopAudioMonitor(); return 0; }
         if (command == L"--status")
         {

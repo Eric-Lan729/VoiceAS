@@ -12,14 +12,6 @@ enum class AudioDeviceState
     Unknown
 };
 
-enum class WirelessConnectionState
-{
-    NotApplicable,
-    Online,
-    Offline,
-    Unknown
-};
-
 struct AudioOutputDevice
 {
     std::wstring id;
@@ -28,10 +20,6 @@ struct AudioOutputDevice
     bool isDefaultConsole = false;
     bool isDefaultMultimedia = false;
     bool isDefaultCommunications = false;
-    std::wstring containerId;
-    WirelessConnectionState wirelessState = WirelessConnectionState::NotApplicable;
-    int batteryPercent = -1;
-    std::string wirelessDetail;
 };
 
 // Takes a snapshot of all render endpoints, including inactive devices.

@@ -6,9 +6,6 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <propvarutil.h>
 #include <wrl/client.h>
-#include <cfgmgr32.h>
-#include <initguid.h>
-#include <devpkey.h>
 
 #include <memory>
 #include <utility>
@@ -16,29 +13,11 @@
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "Propsys.lib")
 #pragma comment(lib, "Uuid.lib")
-#pragma comment(lib, "Cfgmgr32.lib")
 
 namespace
 {
     using Microsoft::WRL::ComPtr;
     using namespace windows_support;
-
-    std::wstring GetContainerId(const std::wstring& endpointId)
-    {
-        std::wstring instanceId = L"SWD\\MMDEVAPI\\" + endpointId;
-        DEVINST deviceNode = 0;
-        if (CM_Locate_DevNodeW(&deviceNode, instanceId.data(), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS)
-            return {};
-        GUID container{};
-        DEVPROPTYPE type = 0;
-        ULONG size = sizeof(container);
-        if (CM_Get_DevNode_PropertyW(deviceNode, &DEVPKEY_Device_ContainerId, &type,
-            reinterpret_cast<PBYTE>(&container), &size, 0) != CR_SUCCESS || type != DEVPROP_TYPE_GUID)
-            return {};
-        if (IsEqualGUID(container, GUID_NULL)) return {};
-        wchar_t text[39]{};
-        return StringFromGUID2(container, text, 39) > 0 ? text : L"";
-    }
 
     std::wstring GetDeviceId(IMMDevice* device)
     {
@@ -131,7 +110,6 @@ std::vector<AudioOutputDevice> EnumerateAudioOutputDevices()
 
         AudioOutputDevice device;
         device.id = GetDeviceId(endpoint.Get());
-        device.containerId = GetContainerId(device.id);
         device.name = GetDeviceName(endpoint.Get());
 
         DWORD state = 0;

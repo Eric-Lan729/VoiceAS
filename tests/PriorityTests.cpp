@@ -1,12 +1,10 @@
 #include "../VoiceAS/AudioMonitor.h"
 #include "../VoiceAS/AudioPriority.h"
 #include "../VoiceAS/WindowsSupport.h"
-#include "../VoiceAS/WirelessHeadset.h"
 
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <array>
 
 namespace
 {
@@ -80,43 +78,21 @@ namespace
         Reject([] { ParseDeviceOrder("1", 0); }, "Empty active list must reject selection.");
     }
 
-    void TestWirelessReadiness()
+    void TestEndpointAvailability()
     {
-        // Captured from this ROG Delta II with its receiver still plugged in.
-        const std::array<unsigned char, 16> off{0xCC, 0x12, 0x07, 0, 0, 0xFF, 0xAA};
-        const std::array<unsigned char, 16> on{0xCC, 0x12, 0x07, 0, 0, 0x05, 0x56, 0x14, 1};
-        Require(DecodeRogStatus(off).state == WirelessConnectionState::Offline, "Powered-off headset must be offline despite Active endpoint.");
-        Require(DecodeRogStatus(on).state == WirelessConnectionState::Online, "Powered-on headset must be online.");
-        Require(DecodeRogStatus(on).batteryPercent == 86, "Battery byte must be decoded correctly.");
-        Require(DecodeRogStatus({}).state == WirelessConnectionState::Unknown, "Empty HID response must not imply power-off.");
-        Require(DecodeRogStatus(std::span(on).first(7)).state == WirelessConnectionState::Unknown, "Truncated responses must not imply power-on.");
-        auto packet = on;
-        packet[2] = 0x03;
-        Require(DecodeRogStatus(packet).state == WirelessConnectionState::Unknown, "Unrelated HID responses must be ignored.");
-        packet = on;
-        packet[0] = 0;
-        Require(DecodeRogStatus(packet).state == WirelessConnectionState::Unknown, "Wrong report ID must not be accepted.");
-        packet = on;
-        packet[6] = 0;
-        Require(DecodeRogStatus(packet).state == WirelessConnectionState::Online, "Zero battery alone must not imply power-off.");
-        packet[6] = 100;
-        Require(DecodeRogStatus(packet).batteryPercent == 100, "Full battery must be supported.");
-        packet[6] = 0xFF;
-        Require(DecodeRogStatus(packet).state == WirelessConnectionState::Unknown, "Invalid battery values must not be mistaken for a known power state.");
-
-        AudioPriorityConfig config{{L"wireless", L"speakers"}, false};
+        AudioPriorityConfig config{{L"bluetooth", L"receiver", L"wired"}, false};
         std::vector<AudioOutputDevice> devices{
-            {L"wireless", L"ROG", AudioDeviceState::Active},
-            {L"speakers", L"Speakers", AudioDeviceState::Active}
+            {L"wired", L"Wired speakers", AudioDeviceState::Active},
+            {L"receiver", L"USB receiver", AudioDeviceState::Active},
+            {L"bluetooth", L"Bluetooth headphones", AudioDeviceState::Active}
         };
-        devices[0].wirelessState = DecodeRogStatus(off).state;
-        Require(FindPreferredDevice(config, devices) == size_t{1}, "Power-off must select next configured output.");
-        devices[0].wirelessState = DecodeRogStatus(on).state;
-        Require(FindPreferredDevice(config, devices) == size_t{0}, "Power-on must regain first priority.");
-        devices[0].wirelessState = WirelessConnectionState::Unknown;
-        Require(FindPreferredDevice(config, devices) == size_t{1}, "Read failure must not be treated as a confirmed online headset.");
-        devices[1].state = AudioDeviceState::Disabled;
-        Require(!FindPreferredDevice(config, devices), "Unknown headset plus unavailable fallback must select nothing.");
+        Require(FindPreferredDevice(config, devices) == size_t{2}, "Active Bluetooth endpoint must follow configured priority.");
+        devices[2].state = AudioDeviceState::Unplugged;
+        Require(FindPreferredDevice(config, devices) == size_t{1}, "Active receiver must be eligible without checking headset power.");
+        devices[1].state = AudioDeviceState::NotPresent;
+        Require(FindPreferredDevice(config, devices) == size_t{0}, "Disconnected endpoints must fall back to the wired output.");
+        devices[2].state = AudioDeviceState::Active;
+        Require(FindPreferredDevice(config, devices) == size_t{2}, "Reconnected Bluetooth endpoint must regain priority.");
     }
 
     void TestConfiguration()
@@ -200,7 +176,7 @@ int main(int argc, char* argv[])
     {
         TestPriorities();
         TestOrderInput();
-        TestWirelessReadiness();
+        TestEndpointAvailability();
         TestConfiguration();
         if (argc > 1 && std::string_view(argv[1]) == "--integration") TestPolicyIntegration();
         std::cout << "PASS: " << checks << " checks.\n";

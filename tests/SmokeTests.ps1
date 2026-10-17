@@ -43,7 +43,7 @@ try {
     New-Item -ItemType Directory -Path $testDirectory | Out-Null
     $list = Complete-App (Start-App @('--list'))
     Assert-True ($list.Code -eq 0) 'Device enumeration failed.'
-    $active = @([regex]::Matches($list.Out, '(?m)^\[\d+\] (?<name>[^\r\n]+)\r?\n\s+ID: (?<id>[^\r\n]+)\r?\n\s+State: Active\r?$(?:\n\s+Wireless: (?<wireless>\w+)\r?$)?'))
+    $active = @([regex]::Matches($list.Out, '(?m)^\[\d+\] (?<name>[^\r\n]+)\r?\n\s+ID: (?<id>[^\r\n]+)\r?\n\s+State: Active\r?$'))
     Assert-True ($active.Count -gt 0) 'Smoke test needs an active output device.'
     $order = @(1..$active.Count)
     [array]::Reverse($order)
@@ -63,11 +63,7 @@ try {
     Assert-True ($cancelled.Code -eq 0 -and [System.IO.File]::ReadAllText($configPath) -eq $saved) 'Cancel must preserve saved order.'
 
     $preview = Complete-App (Start-App @('--monitor', '--dry-run', '--once', '--config', $configPath))
-    $eligibleOrder = @($order | Where-Object { $active[$_ - 1].Groups['wireless'].Value -notin @('Offline', 'Unknown') })
-    if ($eligibleOrder.Count) {
-        Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains($active[$eligibleOrder[0] - 1].Groups['name'].Value)) 'Monitor must select the first configured usable endpoint.'
-    }
-    else { Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains('Keeping the current default output')) 'Unavailable wireless headsets must not be selected.' }
+    Assert-True ($preview.Code -eq 0 -and $preview.Out.Contains($active[$order[0] - 1].Groups['name'].Value)) 'Monitor must select the first configured Active endpoint.'
     $missing = Complete-App (Start-App @('--monitor', '--config', (Join-Path $testDirectory 'missing.txt')))
     Assert-True ($missing.Code -eq 1 -and $missing.Err.Contains('--configure')) 'Missing configuration must explain how to configure.'
     $invalid = Complete-App (Start-App @('--once'))
